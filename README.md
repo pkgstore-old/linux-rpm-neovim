@@ -1,6 +1,6 @@
 # Neovim
 
-Neovim is a project that seeks to aggressively refactor Vim in order to:
+**Neovim** is a project that seeks to aggressively refactor Vim in order to:
 
 - Simplify maintenance and encourage contributions.
 - Split the work between multiple developers.

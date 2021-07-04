@@ -1,0 +1,16 @@
+<services>
+  <service name="obs_scm">
+    <param name="scm">git</param>
+    <param name="url">https://github.com/pkgstore/linux-rpm-neovim.git</param>
+    <param name="revision">main</param>
+    <param name="version">_none_</param>
+    <param name="filename">neovim</param>
+    <param name="changesauthor">kitsune.solar@gmail.com</param>
+    <param name="extract">*</param>
+  </service>
+  <service name="tar" mode="buildtime"/>
+  <service name="recompress" mode="buildtime">
+    <param name="compression">xz</param>
+    <param name="file">*.tar</param>
+  </service>
+</services>

@@ -28,6 +28,13 @@ $ dnf install -y neovim
 $ dnf upgrade -y neovim
 ```
 
+## Remove
+
+```
+$ dnf erase -y neovim
+$ dnf copr remove pkgstore/neovim
+```
+
 ## How to Build
 
 1. Get source from [src.fedoraproject.org](https://src.fedoraproject.org/rpms/neovim).

@@ -5,23 +5,14 @@
 %bcond_with luajit
 %endif
 
-%global luv_min_ver 1.41.0
-
 %if %{with luajit}
-%global luajit_version 2.1
-%global lua_prg %{_bindir}/luajit
-
-%global luv_include_dir %{_includedir}/luajit-%{luajit_version}
-%global luv_library %{_libdir}/luajit/%{luajit_version}/luv.so
+%global luaver 5.1
 %else
-%global lua_version 5.1
-%global lua_prg %{_bindir}/lua-5.1
-
-%global luv_include_dir %{_includedir}/lua-%{lua_version}
-%global luv_library %{_libdir}/lua/%{lua_version}/luv.so
+%global luaver %{lua_version}
 %endif
 
-%global release_prefix          101
+%global luv_min_ver             1.30.0
+%global release_prefix          100
 
 Name:                           neovim
 Version:                        0.5.0
@@ -36,8 +27,8 @@ Source0:                        https://github.com/neovim/neovim/archive/v%{vers
 Source1:                        sysinit.vim
 Source2:                        spec-template
 
-Patch1000:                      neovim-lua-bit32.patch
-Patch1001:                      neovim-cmake-lua-5.1.patch
+Patch1000:                      neovim-0.1.7-bitop.patch
+Patch1001:                      neovim-lua5.4.patch
 
 BuildRequires:                  gcc-c++
 BuildRequires:                  cmake
@@ -50,32 +41,41 @@ BuildRequires:                  gcc
 # luajit implements version 5.1 of the lua language spec, so it needs the
 # compat versions of libs.
 BuildRequires:                  luajit-devel
-BuildRequires:                  luajit2.1-luv-devel >= %{luv_min_ver}
-Requires:                       luajit2.1-luv >= %{luv_min_ver}
-%else
-# lua5.1
-BuildRequires:                  compat-lua
-BuildRequires:                  compat-lua-devel
-BuildRequires:                  lua5.1-bit32
-BuildRequires:                  lua5.1-luv-devel >= %{luv_min_ver}
-Requires:                       lua5.1-luv >= %{luv_min_ver}
-# /with luajit
-%endif
 BuildRequires:                  lua5.1-lpeg
 BuildRequires:                  lua5.1-mpack
+BuildRequires:                  lua5.1-luv-devel >= %{luv_min_ver}
+Requires:                       lua5.1-luv >= %{luv_min_ver}
+%else
+BuildRequires:                  lua-devel
+%if 0%{?fedora} >= 33
+# built-in bit32 removed in Lua 5.4
+BuildRequires:                  lua-bit32
+Requires:                       lua-bit32
+%endif
+BuildRequires:                  lua-lpeg
+BuildRequires:                  lua-mpack
+BuildRequires:                  lua-luv-devel >= %{luv_min_ver}
+Requires:                       lua-luv >= %{luv_min_ver}
+%endif
 %if %{with jemalloc}
 BuildRequires:                  jemalloc-devel
 %endif
 BuildRequires:                  msgpack-devel >= 3.1.0
 BuildRequires:                  libtermkey-devel
 BuildRequires:                  libuv-devel >= 1.28.0
-BuildRequires:                  libvterm-devel >= 0.1.4
+BuildRequires:                  libvterm-devel >= 0.1.1
 BuildRequires:                  unibilium-devel
-BuildRequires:                  libtree-sitter-devel >= 0.20.0
+BuildRequires:                  libtree-sitter-devel
+%if 0%{?el7}
+# Lua 5.1 doesn't have bit32
+BuildRequires:                  lua-bit32
+Requires:                       lua-bit32
+%else
 Suggests:                       (python2-neovim if python2)
 Suggests:                       (python3-neovim if python3)
 # XSel provides access to the system clipboard
 Recommends:                     xsel
+%endif
 
 %description
 Neovim is a refactor - and sometimes redactor - in the tradition of
@@ -95,8 +95,8 @@ parts of Vim, without compromise, and more.
 %setup -q
 
 %if %{without luajit}
-%patch1000 -p1
-%patch1001 -p1
+%patch1000 -p1 -b .bitop
+%patch1001 -p1 -b .lua5.4
 %endif
 
 
@@ -106,10 +106,10 @@ HOSTNAME=koji
 USERNAME=koji
 %cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
        -DPREFER_LUA=%{?with_luajit:OFF}%{!?with_luajit:ON} \
-       -DLUA_PRG=%{lua_prg} \
+       -DLUA_PRG=%{_bindir}/%{?with_luajit:luajit}%{!?with_luajit:lua} \
        -DENABLE_JEMALLOC=%{?with_jemalloc:ON}%{!?with_jemalloc:OFF} \
-       -DLIBLUV_INCLUDE_DIR=%{luv_include_dir} \
-       -DLIBLUV_LIBRARY=%{luv_library}
+       -DLIBLUV_INCLUDE_DIR=%{_includedir}/lua-%{luaver} \
+       -DLIBLUV_LIBRARY=%{_libdir}/lua/%{luaver}/luv.so \
 
 %cmake_build
 
@@ -126,10 +126,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{__install} -m0644 runtime/nvim.png %{buildroot}%{_datadir}/pixmaps/nvim.png
 
 %fdupes %{buildroot}%{_datadir}/
-# Fix exec bits
-find %{buildroot}%{_datadir} \( -name "*.bat" -o -name "*.awk" \) \
-  -print -exec chmod -x '{}' \;
-%find_lang nvim
+%{find_lang} nvim
 
 
 %files -f nvim.lang
@@ -1740,25 +1737,6 @@ find %{buildroot}%{_datadir} \( -name "*.bat" -o -name "*.awk" \) \
 
 
 %changelog
-* Sat Aug 14 2021 Package Store <kitsune.solar@gmail.com> - 0.5.0-101
-- UPD: SPEC-file.
-
-* Fri Jul 30 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-5
-- Build with luajit2.1-luv when we use luajit
-
-* Fri Jul 30 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-4
-- resolves: rhbz#1983288 - Build with lua-5.1 on platforms where luajit is not
-  available
-
-* Thu Jul 22 2021 Fedora Release Engineering <releng@fedoraproject.org> - 0.5.0-3
-- Rebuilt for https://fedoraproject.org/wiki/Fedora_35_Mass_Rebuild
-
-* Thu Jul 08 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-2
-- Fixed execute bits of bat and awk files
-
-* Mon Jul 05 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-1
-- Raise BuildRequires for some libraries
-
 * Sun Jul 04 2021 Package Store <kitsune.solar@gmail.com> - 0.5.0-100
 - UPD: Move to Package Store.
 - UPD: License.

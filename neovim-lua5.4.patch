@@ -1,0 +1,40 @@
+Index: neovim-0.5.0/src/nvim/lua/executor.c
+===================================================================
+--- neovim-0.5.0.orig/src/nvim/lua/executor.c
++++ neovim-0.5.0/src/nvim/lua/executor.c
+@@ -43,6 +43,15 @@
+ 
+ #include "luv/luv.h"
+ 
++#if LUA_VERSION_NUM > 501
++#  define lua_objlen lua_rawlen
++#  define lua_strlen lua_rawlen
++#  define luaL_openlib(L,n,l,nup) luaL_setfuncs((L),(l),(nup))
++#  define luaL_register(L,n,l) (luaL_newlib(L,l))
++#  define lua_getfenv(L, idx) lua_getiuservalue((L), (idx), 1)
++#  define lua_setfenv(L, idx) lua_setiuservalue((L), (idx), 1)
++#endif
++
+ static int in_fast_callback = 0;
+ 
+ typedef struct {
+Index: neovim-0.5.0/src/nvim/lua/treesitter.c
+===================================================================
+--- neovim-0.5.0.orig/src/nvim/lua/treesitter.c
++++ neovim-0.5.0/src/nvim/lua/treesitter.c
+@@ -22,6 +22,15 @@
+ #include "nvim/memline.h"
+ #include "nvim/buffer.h"
+ 
++#if LUA_VERSION_NUM > 501
++#  define lua_objlen lua_rawlen
++#  define lua_strlen lua_rawlen
++#  define luaL_openlib(L,n,l,nup) luaL_setfuncs((L),(l),(nup))
++#  define luaL_register(L,n,l) (luaL_newlib(L,l))
++#  define lua_getfenv(L, idx) lua_getiuservalue((L), (idx), 1)
++#  define lua_setfenv(L, idx) lua_setiuservalue((L), (idx), 1)
++#endif
++
+ #define TS_META_PARSER "treesitter_parser"
+ #define TS_META_TREE "treesitter_tree"
+ #define TS_META_NODE "treesitter_node"

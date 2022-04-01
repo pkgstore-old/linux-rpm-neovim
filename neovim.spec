@@ -21,7 +21,7 @@
   %endif
 %endif
 
-%global luv_min_ver 1.42.0
+%global luv_min_ver 1.41.0
 
 %if %{with luajit}
 %global luajit_version 2.1
@@ -84,8 +84,8 @@ BuildRequires:                  jemalloc-devel
 %endif
 BuildRequires:                  msgpack-devel >= 3.1.0
 BuildRequires:                  libtermkey-devel
-BuildRequires:                  libuv-devel >= 1.42.0
-BuildRequires:                  libvterm-devel >= 0.2
+BuildRequires:                  libuv-devel >= 1.28.0
+BuildRequires:                  libvterm-devel >= 0.1.4
 BuildRequires:                  unibilium-devel
 BuildRequires:                  libtree-sitter-devel >= 0.20.0
 Suggests:                       (python2-%{name} if python2)

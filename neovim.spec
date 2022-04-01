@@ -1,34 +1,59 @@
+%if 0%{?el8}
+# see https://fedoraproject.org/wiki/Changes/CMake_to_do_out-of-source_builds
+# EPEL 8's %%cmake defaults to in-source build, which neovim does not support
+%undefine __cmake_in_source_build
+%endif
+
 %bcond_with jemalloc
 %ifarch %{arm} %{ix86} x86_64 %{mips}
-%bcond_without luajit
+  %bcond_without luajit
 %else
-%bcond_with luajit
+  %ifarch aarch64
+    %if 0%{?el8}
+      # luajit codepath buggy on el8 aarch64
+      # https://bugzilla.redhat.com/show_bug.cgi?id=2065340
+      %bcond_with luajit
+    %else
+      %bcond_without luajit
+    %endif
+  %else
+    %bcond_with luajit
+  %endif
 %endif
+
+%global luv_min_ver 1.42.0
 
 %if %{with luajit}
-%global luaver 5.1
+%global luajit_version 2.1
+%global lua_prg %{_bindir}/luajit
+
+%global luv_include_dir %{_includedir}/luajit-%{luajit_version}
+%global luv_library %{_libdir}/luajit/%{luajit_version}/luv.so
 %else
-%global luaver %{lua_version}
+%global lua_version 5.1
+%global lua_prg %{_bindir}/lua-5.1
+
+%global luv_include_dir %{_includedir}/lua-%{lua_version}
+%global luv_library %{_libdir}/lua/%{lua_version}/luv.so
 %endif
 
-%global luv_min_ver             1.30.0
-%global release_prefix          100
+%global release_prefix          1000
 
 Name:                           neovim
-Version:                        0.5.0
+Version:                        0.6.1
 Release:                        %{release_prefix}%{?dist}
 Summary:                        Vim-fork focused on extensibility and agility
 License:                        ASL 2.0
 URL:                            https://neovim.io
-Vendor:                         Package Store <https://pkgstore.github.io>
-Packager:                       Kitsune Solar <kitsune.solar@gmail.com>
 
-Source0:                        https://github.com/neovim/neovim/archive/v%{version}/%{name}-%{version}.tar.gz
+Source0:                        %{name}-%{version}.tar.xz
 Source1:                        sysinit.vim
 Source2:                        spec-template
 
-Patch1000:                      neovim-0.1.7-bitop.patch
-Patch1001:                      neovim-lua5.4.patch
+Patch0:                         %{name}-libvterm-vterm_output_set_callback.patch
+Patch1:                         %{name}-libvterm-0-2-support.patch
+Patch1000:                      %{name}-lua-bit32.patch
+Patch1001:                      %{name}-cmake-lua-5.1.patch
 
 BuildRequires:                  gcc-c++
 BuildRequires:                  cmake
@@ -41,41 +66,32 @@ BuildRequires:                  gcc
 # luajit implements version 5.1 of the lua language spec, so it needs the
 # compat versions of libs.
 BuildRequires:                  luajit-devel
-BuildRequires:                  lua5.1-lpeg
-BuildRequires:                  lua5.1-mpack
+BuildRequires:                  luajit2.1-luv-devel >= %{luv_min_ver}
+Requires:                       luajit2.1-luv >= %{luv_min_ver}
+%else
+# lua5.1
+BuildRequires:                  compat-lua
+BuildRequires:                  compat-lua-devel
+BuildRequires:                  lua5.1-bit32
 BuildRequires:                  lua5.1-luv-devel >= %{luv_min_ver}
 Requires:                       lua5.1-luv >= %{luv_min_ver}
-%else
-BuildRequires:                  lua-devel
-%if 0%{?fedora} >= 33
-# built-in bit32 removed in Lua 5.4
-BuildRequires:                  lua-bit32
-Requires:                       lua-bit32
+# /with luajit
 %endif
-BuildRequires:                  lua-lpeg
-BuildRequires:                  lua-mpack
-BuildRequires:                  lua-luv-devel >= %{luv_min_ver}
-Requires:                       lua-luv >= %{luv_min_ver}
-%endif
+BuildRequires:                  lua5.1-lpeg
+BuildRequires:                  lua5.1-mpack
 %if %{with jemalloc}
 BuildRequires:                  jemalloc-devel
 %endif
 BuildRequires:                  msgpack-devel >= 3.1.0
 BuildRequires:                  libtermkey-devel
-BuildRequires:                  libuv-devel >= 1.28.0
-BuildRequires:                  libvterm-devel >= 0.1.1
+BuildRequires:                  libuv-devel >= 1.42.0
+BuildRequires:                  libvterm-devel >= 0.2
 BuildRequires:                  unibilium-devel
-BuildRequires:                  libtree-sitter-devel
-%if 0%{?el7}
-# Lua 5.1 doesn't have bit32
-BuildRequires:                  lua-bit32
-Requires:                       lua-bit32
-%else
-Suggests:                       (python2-neovim if python2)
-Suggests:                       (python3-neovim if python3)
+BuildRequires:                  libtree-sitter-devel >= 0.20.0
+Suggests:                       (python2-%{name} if python2)
+Suggests:                       (python3-%{name} if python3)
 # XSel provides access to the system clipboard
 Recommends:                     xsel
-%endif
 
 %description
 Neovim is a refactor - and sometimes redactor - in the tradition of
@@ -94,9 +110,12 @@ parts of Vim, without compromise, and more.
 %prep
 %setup -q
 
+%patch0 -p1
+%patch1 -p1
+
 %if %{without luajit}
-%patch1000 -p1 -b .bitop
-%patch1001 -p1 -b .lua5.4
+%patch1000 -p1
+%patch1001 -p1
 %endif
 
 
@@ -104,21 +123,22 @@ parts of Vim, without compromise, and more.
 # set vars to make build reproducible; see config/CMakeLists.txt
 HOSTNAME=koji
 USERNAME=koji
-%cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-       -DPREFER_LUA=%{?with_luajit:OFF}%{!?with_luajit:ON} \
-       -DLUA_PRG=%{_bindir}/%{?with_luajit:luajit}%{!?with_luajit:lua} \
-       -DENABLE_JEMALLOC=%{?with_jemalloc:ON}%{!?with_jemalloc:OFF} \
-       -DLIBLUV_INCLUDE_DIR=%{_includedir}/lua-%{luaver} \
-       -DLIBLUV_LIBRARY=%{_libdir}/lua/%{luaver}/luv.so \
+%{cmake}                                                        \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo                             \
+  -DPREFER_LUA=%{?with_luajit:OFF}%{!?with_luajit:ON}           \
+  -DLUA_PRG=%{lua_prg}                                          \
+  -DENABLE_JEMALLOC=%{?with_jemalloc:ON}%{!?with_jemalloc:OFF}  \
+  -DLIBLUV_INCLUDE_DIR=%{luv_include_dir}                       \
+  -DLIBLUV_LIBRARY=%{luv_library}
 
-%cmake_build
+%{cmake_build}
 
 
 %install
-%cmake_install
+%{cmake_install}
 
-%{__install} -p -m 644 %SOURCE1 %{buildroot}%{_datadir}/nvim/sysinit.vim
-%{__install} -p -m 644 %SOURCE2 %{buildroot}%{_datadir}/nvim/template.spec
+%{__install} -p -m 644 %{SOURCE1} %{buildroot}%{_datadir}/nvim/sysinit.vim
+%{__install} -p -m 644 %{SOURCE2} %{buildroot}%{_datadir}/nvim/template.spec
 
 desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
   runtime/nvim.desktop
@@ -126,8 +146,10 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{__install} -m0644 runtime/nvim.png %{buildroot}%{_datadir}/pixmaps/nvim.png
 
 %fdupes %{buildroot}%{_datadir}/
+# Fix exec bits
+find %{buildroot}%{_datadir} \( -name "*.bat" -o -name "*.awk" \) \
+  -print -exec chmod -x '{}' \;
 %{find_lang} nvim
-
 
 %files -f nvim.lang
 %license LICENSE
@@ -157,7 +179,6 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/menu.vim
 %{_datadir}/nvim/runtime/mswin.vim
 %{_datadir}/nvim/runtime/optwin.vim
-%{_datadir}/nvim/runtime/rgb.txt
 %{_datadir}/nvim/runtime/scripts.vim
 %{_datadir}/nvim/runtime/synmenu.vim
 
@@ -207,9 +228,6 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 
 %dir %{_datadir}/nvim/runtime/autoload/dist
 %{_datadir}/nvim/runtime/autoload/dist/ft.vim
-
-%dir %{_datadir}/nvim/runtime/autoload/health/
-%{_datadir}/nvim/runtime/autoload/health/treesitter.vim
 
 %dir %{_datadir}/nvim/runtime/autoload/provider
 %{_datadir}/nvim/runtime/autoload/provider/clipboard.vim
@@ -336,9 +354,11 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/compiler/rubyunit.vim
 %{_datadir}/nvim/runtime/compiler/rustc.vim
 %{_datadir}/nvim/runtime/compiler/sass.vim
+%{_datadir}/nvim/runtime/compiler/scdoc.vim
 %{_datadir}/nvim/runtime/compiler/se.vim
 %{_datadir}/nvim/runtime/compiler/shellcheck.vim
 %{_datadir}/nvim/runtime/compiler/sml.vim
+%{_datadir}/nvim/runtime/compiler/spectral.vim
 %{_datadir}/nvim/runtime/compiler/splint.vim
 %{_datadir}/nvim/runtime/compiler/stack.vim
 %{_datadir}/nvim/runtime/compiler/standard.vim
@@ -353,6 +373,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/compiler/xmllint.vim
 %{_datadir}/nvim/runtime/compiler/xmlwf.vim
 %{_datadir}/nvim/runtime/compiler/xo.vim
+%{_datadir}/nvim/runtime/compiler/yamllint.vim
 %{_datadir}/nvim/runtime/compiler/zsh.vim
 
 %dir %{_datadir}/nvim/runtime/doc
@@ -364,7 +385,9 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/doc/cmdline.txt
 %{_datadir}/nvim/runtime/doc/debug.txt
 %{_datadir}/nvim/runtime/doc/deprecated.txt
+%{_datadir}/nvim/runtime/doc/dev_style.txt
 %{_datadir}/nvim/runtime/doc/develop.txt
+%{_datadir}/nvim/runtime/doc/diagnostic.txt
 %{_datadir}/nvim/runtime/doc/diff.txt
 %{_datadir}/nvim/runtime/doc/digraph.txt
 %{_datadir}/nvim/runtime/doc/editing.txt
@@ -419,7 +442,6 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/doc/quickfix.txt
 %{_datadir}/nvim/runtime/doc/quickref.txt
 %{_datadir}/nvim/runtime/doc/recover.txt
-%{_datadir}/nvim/runtime/doc/remote.txt
 %{_datadir}/nvim/runtime/doc/remote_plugin.txt
 %{_datadir}/nvim/runtime/doc/repeat.txt
 %{_datadir}/nvim/runtime/doc/rileft.txt
@@ -504,6 +526,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/ftplugin/cfg.vim
 %{_datadir}/nvim/runtime/ftplugin/ch.vim
 %{_datadir}/nvim/runtime/ftplugin/changelog.vim
+%{_datadir}/nvim/runtime/ftplugin/checkhealth.vim
 %{_datadir}/nvim/runtime/ftplugin/chicken.vim
 %{_datadir}/nvim/runtime/ftplugin/clojure.vim
 %{_datadir}/nvim/runtime/ftplugin/cmake.vim
@@ -579,7 +602,9 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/ftplugin/javascriptreact.vim
 %{_datadir}/nvim/runtime/ftplugin/jproperties.vim
 %{_datadir}/nvim/runtime/ftplugin/json.vim
+%{_datadir}/nvim/runtime/ftplugin/jsonc.vim
 %{_datadir}/nvim/runtime/ftplugin/jsp.vim
+%{_datadir}/nvim/runtime/ftplugin/julia.vim
 %{_datadir}/nvim/runtime/ftplugin/kconfig.vim
 %{_datadir}/nvim/runtime/ftplugin/kwt.vim
 %{_datadir}/nvim/runtime/ftplugin/ld.vim
@@ -622,11 +647,13 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/ftplugin/nanorc.vim
 %{_datadir}/nvim/runtime/ftplugin/neomuttrc.vim
 %{_datadir}/nvim/runtime/ftplugin/netrc.vim
+%{_datadir}/nvim/runtime/ftplugin/nginx.vim
 %{_datadir}/nvim/runtime/ftplugin/nroff.vim
 %{_datadir}/nvim/runtime/ftplugin/nsis.vim
 %{_datadir}/nvim/runtime/ftplugin/objc.vim
 %{_datadir}/nvim/runtime/ftplugin/ocaml.vim
 %{_datadir}/nvim/runtime/ftplugin/occam.vim
+%{_datadir}/nvim/runtime/ftplugin/octave.vim
 %{_datadir}/nvim/runtime/ftplugin/pamconf.vim
 %{_datadir}/nvim/runtime/ftplugin/pascal.vim
 %{_datadir}/nvim/runtime/ftplugin/passwd.vim
@@ -657,6 +684,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/ftplugin/rmd.vim
 %{_datadir}/nvim/runtime/ftplugin/rnc.vim
 %{_datadir}/nvim/runtime/ftplugin/rnoweb.vim
+%{_datadir}/nvim/runtime/ftplugin/routeros.vim
 %{_datadir}/nvim/runtime/ftplugin/rpl.vim
 %{_datadir}/nvim/runtime/ftplugin/rrst.vim
 %{_datadir}/nvim/runtime/ftplugin/rst.vim
@@ -667,6 +695,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/ftplugin/scala.vim
 %{_datadir}/nvim/runtime/ftplugin/scheme.vim
 %{_datadir}/nvim/runtime/ftplugin/screen.vim
+%{_datadir}/nvim/runtime/ftplugin/scdoc.vim
 %{_datadir}/nvim/runtime/ftplugin/scss.vim
 %{_datadir}/nvim/runtime/ftplugin/sensors.vim
 %{_datadir}/nvim/runtime/ftplugin/services.vim
@@ -695,6 +724,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/ftplugin/tex.vim
 %{_datadir}/nvim/runtime/ftplugin/text.vim
 %{_datadir}/nvim/runtime/ftplugin/tidy.vim
+%{_datadir}/nvim/runtime/ftplugin/toml.vim
 %{_datadir}/nvim/runtime/ftplugin/tmux.vim
 %{_datadir}/nvim/runtime/ftplugin/treetop.vim
 %{_datadir}/nvim/runtime/ftplugin/tt2html.vim
@@ -778,7 +808,9 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/indent/javascript.vim
 %{_datadir}/nvim/runtime/indent/javascriptreact.vim
 %{_datadir}/nvim/runtime/indent/json.vim
+%{_datadir}/nvim/runtime/indent/jsonc.vim
 %{_datadir}/nvim/runtime/indent/jsp.vim
+%{_datadir}/nvim/runtime/indent/julia.vim
 %{_datadir}/nvim/runtime/indent/ld.vim
 %{_datadir}/nvim/runtime/indent/less.vim
 %{_datadir}/nvim/runtime/indent/lifelines.vim
@@ -792,6 +824,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/indent/mf.vim
 %{_datadir}/nvim/runtime/indent/mma.vim
 %{_datadir}/nvim/runtime/indent/mp.vim
+%{_datadir}/nvim/runtime/indent/nginx.vim
 %{_datadir}/nvim/runtime/indent/nsis.vim
 %{_datadir}/nvim/runtime/indent/objc.vim
 %{_datadir}/nvim/runtime/indent/ocaml.vim
@@ -946,27 +979,34 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/keymap/vietnamese-vni_utf-8.vim
 
 %dir %{_datadir}/nvim/runtime/lua
+%{_datadir}/nvim/runtime/lua/health.lua
 %{_datadir}/nvim/runtime/lua/man.lua
 
 %dir %{_datadir}/nvim/runtime/lua/vim
 %{_datadir}/nvim/runtime/lua/vim/F.lua
 %{_datadir}/nvim/runtime/lua/vim/_meta.lua
 %{_datadir}/nvim/runtime/lua/vim/compat.lua
+%{_datadir}/nvim/runtime/lua/vim/diagnostic.lua
 %{_datadir}/nvim/runtime/lua/vim/highlight.lua
 %{_datadir}/nvim/runtime/lua/vim/inspect.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp.lua
 %{_datadir}/nvim/runtime/lua/vim/shared.lua
 %{_datadir}/nvim/runtime/lua/vim/treesitter.lua
+%{_datadir}/nvim/runtime/lua/vim/ui.lua
 %{_datadir}/nvim/runtime/lua/vim/uri.lua
 
 %dir %{_datadir}/nvim/runtime/lua/vim/lsp/
+%{_datadir}/nvim/runtime/lua/vim/lsp/_snippet.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/buf.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/codelens.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/diagnostic.lua
+%{_datadir}/nvim/runtime/lua/vim/lsp/health.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/handlers.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/log.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/protocol.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/rpc.lua
+%{_datadir}/nvim/runtime/lua/vim/lsp/sync.lua
+%{_datadir}/nvim/runtime/lua/vim/lsp/tagfunc.lua
 %{_datadir}/nvim/runtime/lua/vim/lsp/util.lua
 
 %dir %{_datadir}/nvim/runtime/lua/vim/treesitter/
@@ -1156,6 +1196,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/change.vim
 %{_datadir}/nvim/runtime/syntax/changelog.vim
 %{_datadir}/nvim/runtime/syntax/chaskell.vim
+%{_datadir}/nvim/runtime/syntax/checkhealth.vim
 %{_datadir}/nvim/runtime/syntax/cheetah.vim
 %{_datadir}/nvim/runtime/syntax/chicken.vim
 %{_datadir}/nvim/runtime/syntax/chill.vim
@@ -1274,6 +1315,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/gdb.vim
 %{_datadir}/nvim/runtime/syntax/gdmo.vim
 %{_datadir}/nvim/runtime/syntax/gedcom.vim
+%{_datadir}/nvim/runtime/syntax/gemtext.vim
 %{_datadir}/nvim/runtime/syntax/gift.vim
 %{_datadir}/nvim/runtime/syntax/git.vim
 %{_datadir}/nvim/runtime/syntax/gitcommit.vim
@@ -1297,6 +1339,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/grub.vim
 %{_datadir}/nvim/runtime/syntax/gsp.vim
 %{_datadir}/nvim/runtime/syntax/gtkrc.vim
+%{_datadir}/nvim/runtime/syntax/gvpr.vim
 %{_datadir}/nvim/runtime/syntax/haml.vim
 %{_datadir}/nvim/runtime/syntax/hamster.vim
 %{_datadir}/nvim/runtime/syntax/haskell.vim
@@ -1346,7 +1389,9 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/jovial.vim
 %{_datadir}/nvim/runtime/syntax/jproperties.vim
 %{_datadir}/nvim/runtime/syntax/json.vim
+%{_datadir}/nvim/runtime/syntax/jsonc.vim
 %{_datadir}/nvim/runtime/syntax/jsp.vim
+%{_datadir}/nvim/runtime/syntax/julia.vim
 %{_datadir}/nvim/runtime/syntax/kconfig.vim
 %{_datadir}/nvim/runtime/syntax/kivy.vim
 %{_datadir}/nvim/runtime/syntax/kix.vim
@@ -1439,6 +1484,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/neomuttrc.vim
 %{_datadir}/nvim/runtime/syntax/netrc.vim
 %{_datadir}/nvim/runtime/syntax/netrw.vim
+%{_datadir}/nvim/runtime/syntax/nginx.vim
 %{_datadir}/nvim/runtime/syntax/ninja.vim
 %{_datadir}/nvim/runtime/syntax/nosyntax.vim
 %{_datadir}/nvim/runtime/syntax/nqc.vim
@@ -1530,6 +1576,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/rnoweb.vim
 %{_datadir}/nvim/runtime/syntax/robots.vim
 %{_datadir}/nvim/runtime/syntax/rpcgen.vim
+%{_datadir}/nvim/runtime/syntax/routeros.vim
 %{_datadir}/nvim/runtime/syntax/rpl.vim
 %{_datadir}/nvim/runtime/syntax/rrst.vim
 %{_datadir}/nvim/runtime/syntax/rst.vim
@@ -1546,6 +1593,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/scilab.vim
 %{_datadir}/nvim/runtime/syntax/screen.vim
 %{_datadir}/nvim/runtime/syntax/scss.vim
+%{_datadir}/nvim/runtime/syntax/scdoc.vim
 %{_datadir}/nvim/runtime/syntax/sd.vim
 %{_datadir}/nvim/runtime/syntax/sdc.vim
 %{_datadir}/nvim/runtime/syntax/sdl.vim
@@ -1609,12 +1657,12 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/stata.vim
 %{_datadir}/nvim/runtime/syntax/stp.vim
 %{_datadir}/nvim/runtime/syntax/strace.vim
+%{_datadir}/nvim/runtime/syntax/structurizr.vim
 %{_datadir}/nvim/runtime/syntax/sudoers.vim
 %{_datadir}/nvim/runtime/syntax/svg.vim
 %{_datadir}/nvim/runtime/syntax/svn.vim
 %{_datadir}/nvim/runtime/syntax/swift.vim
 %{_datadir}/nvim/runtime/syntax/swiftgyb.vim
-%{_datadir}/nvim/runtime/syntax/syncolor.vim
 %{_datadir}/nvim/runtime/syntax/synload.vim
 %{_datadir}/nvim/runtime/syntax/syntax.vim
 %{_datadir}/nvim/runtime/syntax/sysctl.vim
@@ -1643,6 +1691,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 %{_datadir}/nvim/runtime/syntax/tilde.vim
 %{_datadir}/nvim/runtime/syntax/tli.vim
 %{_datadir}/nvim/runtime/syntax/tmux.vim
+%{_datadir}/nvim/runtime/syntax/toml.vim
 %{_datadir}/nvim/runtime/syntax/tpp.vim
 %{_datadir}/nvim/runtime/syntax/trasys.vim
 %{_datadir}/nvim/runtime/syntax/treetop.vim
@@ -1737,9 +1786,46 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications \
 
 
 %changelog
-* Sun Jul 04 2021 Package Store <kitsune.solar@gmail.com> - 0.5.0-100
-- UPD: Move to Package Store.
-- UPD: License.
+* Fri Apr 01 2022 Package Store <pkgstore@mail.ru> - 0.6.1-1000
+- UPD: Rebuild by Package Store.
+- UPD: File "neovim.spec".
+
+* Thu Mar 17 2022 Michel Alexandre Salim <salimma@fedoraproject.org> - 0.6.1-4
+- Support building on EPEL 8
+
+* Wed Feb 09 2022 Andreas Schneider <asn@redhat.com> - 0.6.1-3
+- Fix libvterm 0.2 support
+
+* Thu Jan 20 2022 Fedora Release Engineering <releng@fedoraproject.org> - 0.6.1-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_36_Mass_Rebuild
+
+* Sat Jan 01 2022 Andreas Schneider <asn@redhat.com> - 0.6.1-1
+- Update to version 0.6.1
+
+* Wed Dec 01 2021 Andreas Schneider <asn@redhat.com> - 0.6.0-1
+- Update to version 0.6.0
+
+* Thu Oct 28 2021 Andreas Schneider <asn@redhat.com> - 0.5.1-2
+- Use luajit also on aarch64
+
+* Mon Sep 27 2021 Andreas Schneider <asn@redhat.com> - 0.5.1-1
+- Update to version 0.5.1
+
+* Fri Jul 30 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-5
+- Build with luajit2.1-luv when we use luajit
+
+* Fri Jul 30 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-4
+- resolves: rhbz#1983288 - Build with lua-5.1 on platforms where luajit is not
+  available
+
+* Thu Jul 22 2021 Fedora Release Engineering <releng@fedoraproject.org> - 0.5.0-3
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_35_Mass_Rebuild
+
+* Thu Jul 08 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-2
+- Fixed execute bits of bat and awk files
+
+* Mon Jul 05 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-1
+- Raise BuildRequires for some libraries
 
 * Sat Jul 03 2021 Andreas Schneider <asn@redhat.com> - 0.5.0-0
 - Update to version 0.5.0

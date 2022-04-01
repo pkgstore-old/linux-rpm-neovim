@@ -1,0 +1,88 @@
+From 7813b48645bf2af11c2d18f4e4154a74d4dad662 Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@cryptomilk.org>
+Date: Tue, 8 Feb 2022 10:50:17 +0100
+Subject: [PATCH] feat(term): use vterm_output_set_callback()
+
+---
+ src/nvim/channel.c  |  1 -
+ src/nvim/terminal.c | 20 ++++++--------------
+ 2 files changed, 6 insertions(+), 15 deletions(-)
+
+Index: neovim-0.6.1/src/nvim/channel.c
+===================================================================
+--- neovim-0.6.1.orig/src/nvim/channel.c	2022-02-09 21:04:03.103478757 +0100
++++ neovim-0.6.1/src/nvim/channel.c	2022-02-09 21:05:54.198482470 +0100
+@@ -613,7 +613,6 @@ static void on_channel_output(Stream *st
+   } else {
+     if (chan->term) {
+       terminal_receive(chan->term, ptr, count);
+-      terminal_flush_output(chan->term);
+     }
+ 
+     rbuffer_consumed(buf, count);
+Index: neovim-0.6.1/src/nvim/terminal.c
+===================================================================
+--- neovim-0.6.1.orig/src/nvim/terminal.c	2021-12-31 18:02:21.000000000 +0100
++++ neovim-0.6.1/src/nvim/terminal.c	2022-02-09 21:06:25.507483517 +0100
+@@ -173,6 +173,11 @@ void terminal_teardown(void)
+   pmap_init(ptr_t, &invalidated_terminals);
+ }
+ 
++static void term_output_callback(const char *s, size_t len, void *user_data)
++{
++  terminal_send((Terminal *)user_data, (char *)s, len);
++}
++
+ // public API {{{
+ 
+ Terminal *terminal_open(buf_T *buf, TerminalOptions opts)
+@@ -196,6 +201,7 @@ Terminal *terminal_open(buf_T *buf, Term
+   vterm_screen_set_callbacks(rv->vts, &vterm_screen_callbacks, rv);
+   vterm_screen_set_damage_merge(rv->vts, VTERM_DAMAGE_SCROLL);
+   vterm_screen_reset(rv->vts, 1);
++  vterm_output_set_callback(rv->vt, term_output_callback, rv);
+   // force a initial refresh of the screen to ensure the buffer will always
+   // have as many lines as screen rows when refresh_scrollback is called
+   rv->invalid_start = 0;
+@@ -633,7 +639,6 @@ void terminal_paste(long count, char_u *
+     return;
+   }
+   vterm_keyboard_start_paste(curbuf->terminal->vt);
+-  terminal_flush_output(curbuf->terminal);
+   size_t buff_len = STRLEN(y_array[0]);
+   char_u *buff = xmalloc(buff_len);
+   for (int i = 0; i < count; i++) {  // -V756
+@@ -664,14 +669,6 @@ void terminal_paste(long count, char_u *
+   }
+   xfree(buff);
+   vterm_keyboard_end_paste(curbuf->terminal->vt);
+-  terminal_flush_output(curbuf->terminal);
+-}
+-
+-void terminal_flush_output(Terminal *term)
+-{
+-  size_t len = vterm_output_read(term->vt, term->textbuf,
+-                                 sizeof(term->textbuf));
+-  terminal_send(term, term->textbuf, len);
+ }
+ 
+ void terminal_send_key(Terminal *term, int c)
+@@ -690,8 +687,6 @@ void terminal_send_key(Terminal *term, i
+   } else {
+     vterm_keyboard_unichar(term->vt, (uint32_t)c, mod);
+   }
+-
+-  terminal_flush_output(term);
+ }
+ 
+ void terminal_receive(Terminal *term, char *data, size_t len)
+@@ -1268,9 +1263,6 @@ static bool send_mouse_event(Terminal *t
+     }
+ 
+     mouse_action(term, button, row, col - offset, drag, 0);
+-    size_t len = vterm_output_read(term->vt, term->textbuf,
+-                                   sizeof(term->textbuf));
+-    terminal_send(term, term->textbuf, len);
+     return false;
+   }
+ 
